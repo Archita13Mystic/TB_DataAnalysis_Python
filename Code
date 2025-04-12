@@ -1,0 +1,199 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import ttest_ind
+
+# -----------------------------------
+# STEP 1: Load and Clean Data
+# -----------------------------------
+data = pd.read_csv('TB_Burden_Country.csv')
+
+print(data.head())
+print(data.info())
+print("Initial Null Values:\n", data.isnull().sum())
+
+# Drop columns with >50% missing data
+threshold = 0.5
+data = data.loc[:, data.isnull().mean() < threshold].copy()
+
+# Fill categorical columns with mode
+for col in data.select_dtypes(include=['object']).columns:
+    data[col] = data[col].fillna(data[col].mode()[0])
+
+# Fill numeric columns with mean
+for col in data.select_dtypes(include=['float64', 'int64']).columns:
+    data[col] = data[col].fillna(data[col].mean())
+
+print("After Cleaning - Null Values:\n", data.isnull().sum())
+
+# -----------------------------------
+# STEP 2: Normalize (per 100,000 population)
+# -----------------------------------
+data['Incidence rate (calc)'] = (data['Estimated number of incident cases (all forms)'] / data['Estimated total population number']) * 100000
+data['Mortality rate (calc)'] = (data['Estimated number of deaths from TB (all forms, excluding HIV)'] / data['Estimated total population number']) * 100000
+data['Prevalence rate (calc)'] = (data['Estimated prevalence of TB (all forms)'] / data['Estimated total population number']) * 100000
+
+# -----------------------------------
+# STEP 3: Final Correlation Heatmap
+# -----------------------------------
+plt.figure(figsize=(10, 8))
+sns.heatmap(data[['Estimated total population number',
+    'Estimated number of incident cases (all forms)',
+    'Estimated incidence (all forms) per 100 000 population',
+    'Estimated number of deaths from TB (all forms, excluding HIV)',
+    'Estimated mortality of TB cases (all forms, excluding HIV) per 100 000 population',
+    'Estimated prevalence of TB (all forms) per 100 000 population',
+    'Case detection rate (all forms), percent']].corr(numeric_only=True), annot=True, cmap='coolwarm')
+plt.title("Correlation Heatmap")
+plt.show()
+
+# -----------------------------------
+# STEP 4: Analyze TB Burden in India (NEW)
+# -----------------------------------
+india_data = data[data['Country or territory name'] == 'India']
+
+plt.figure(figsize=(12, 6))
+plt.plot(india_data['Year'], india_data['Incidence rate (calc)'], label='Incidence Rate', marker='o')
+plt.plot(india_data['Year'], india_data['Mortality rate (calc)'], label='Mortality Rate', marker='x')
+plt.plot(india_data['Year'], india_data['Prevalence rate (calc)'], label='Prevalence Rate', marker='s')
+plt.title("TB Trends in India Over Time")
+plt.xlabel("Year")
+plt.ylabel("Rate per 100,000 Population")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# -----------------------------------
+# STEP 5: Global TB Incidence Over Time
+# -----------------------------------
+global_incidence = data.groupby('Year')['Incidence rate (calc)'].mean()
+
+plt.figure(figsize=(10, 6))
+global_incidence.plot(kind='line', color='orange')
+plt.title("Global TB Incidence Over Time")
+plt.ylabel("Incidence Rate per 100,000")
+plt.xlabel("Year")
+plt.grid(True)
+plt.show()
+
+# -----------------------------------
+# STEP 6: Visualize Uncertainty in TB Prevalence Estimates (NEW)
+# -----------------------------------
+plt.figure(figsize=(12, 6))
+sns.boxplot(x='Year', y='Prevalence rate (calc)', data=data, color='lightblue')
+plt.title("Uncertainty in TB Prevalence Estimates Over Time")
+plt.xlabel("Year")
+plt.ylabel("Prevalence Rate per 100,000")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# -----------------------------------
+# STEP 7: Region-wise Mortality + T-Test
+# -----------------------------------
+region_mortality = data.groupby('Region')['Mortality rate (calc)'].mean()
+
+plt.figure(figsize=(10, 6))
+region_mortality.plot(kind='bar', color='skyblue')
+plt.title("TB Mortality Rate by WHO Region")
+plt.ylabel("Mortality Rate per 100,000")
+plt.xlabel("WHO Region")
+plt.grid(True)
+plt.show()
+
+# T-test between AFR and EMR
+region1 = data[data['Region'] == 'AFR']['Mortality rate (calc)']
+region2 = data[data['Region'] == 'EMR']['Mortality rate (calc)']
+t_stat, p_value = ttest_ind(region1.dropna(), region2.dropna())
+
+print(f"\nT-test between AFR and EMR mortality rates:")
+print(f"T-statistic: {t_stat:.2f}, P-value: {p_value:.4f}")
+if p_value < 0.05:
+    print("Statistically significant difference.")
+else:
+    print("No statistically significant difference.")
+
+# -----------------------------------
+# STEP 8: Top 10 High-Burden Countries (Latest Year)
+# -----------------------------------
+latest_year = data['Year'].max()
+top_countries = data[data['Year'] == latest_year].nlargest(10, 'Prevalence rate (calc)')
+
+print(f"\nTop 10 High-Burden Countries in {latest_year} (by Prevalence rate):")
+print(top_countries[['Country or territory name', 'Prevalence rate (calc)']])
+
+plt.figure(figsize=(12, 6))
+plt.bar(top_countries['Country or territory name'], top_countries['Prevalence rate (calc)'], color='lightcoral')
+plt.title(f"Top 10 High-Burden Countries ({latest_year})")
+plt.xlabel("Country")
+plt.ylabel("TB Prevalence per 100,000")
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# -----------------------------------
+# STEP 9: Distribution + Outliers in Incidence Rate
+# -----------------------------------
+plt.figure(figsize=(10, 6))
+data['Incidence rate (calc)'].plot(kind='hist', bins=30, color='lightgreen')
+plt.title("Distribution of TB Incidence Rates")
+plt.xlabel("Incidence Rate per 100,000")
+plt.ylabel("Frequency")
+plt.grid(True)
+plt.show()
+
+# IQR method to detect outliers
+Q1 = data['Incidence rate (calc)'].quantile(0.25)
+Q3 = data['Incidence rate (calc)'].quantile(0.75)
+IQR = Q3 - Q1
+
+outliers_iqr = data[
+    (data['Incidence rate (calc)'] < Q1 - 1.5 * IQR) |
+    (data['Incidence rate (calc)'] > Q3 + 1.5 * IQR)
+]
+
+print(f"\nOutliers in TB Incidence Rate (using IQR method):")
+print(outliers_iqr[['Country or territory name', 'Year', 'Incidence rate (calc)']])
+
+plt.figure(figsize=(10, 6))
+sns.boxplot(x=data['Incidence rate (calc)'], color='lightblue')
+plt.title("Boxplot of TB Incidence Rates")
+plt.grid(True)
+plt.show()
+
+# -----------------------------------
+# STEP 10: Population vs TB Incidence (Correlation)
+# -----------------------------------
+plt.figure(figsize=(10, 6))
+plt.scatter(data['Estimated total population number'], data['Estimated number of incident cases (all forms)'],
+            alpha=0.5, color='skyblue')
+plt.title("Population vs Incident TB Cases")
+plt.xlabel("Total Population")
+plt.ylabel("Number of Incident TB Cases")
+plt.grid(True)
+plt.show()
+
+correlation_matrix = data[['Estimated total population number', 'Estimated number of incident cases (all forms)']].corr()
+
+plt.figure(figsize=(8, 6))
+sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt=".2f")
+plt.title("Correlation Heatmap: Population vs TB Incidence")
+plt.show()
+
+# -----------------------------------
+# STEP 11: Case Detection vs Mortality/Prevalence
+# -----------------------------------
+plt.figure(figsize=(10, 6))
+plt.scatter(data['Case detection rate (all forms), percent'],
+            data['Mortality rate (calc)'], label='Mortality', alpha=0.5,marker='*',
+    s=80,color='rebeccapurple')
+plt.scatter(data['Case detection rate (all forms), percent'],
+            data['Prevalence rate (calc)'], label='Prevalence', alpha=0.5, color='orange',marker='x',s=80)
+plt.title("Case Detection Rate vs Mortality and Prevalence")
+plt.xlabel("Case Detection Rate (%)")
+plt.ylabel("Rate per 100,000 Population")
+plt.legend()
+plt.grid(True)
+plt.show()
+
